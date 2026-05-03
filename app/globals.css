@@ -26,6 +26,12 @@
   .badge-orange {
     @apply inline-flex items-center text-xs font-semibold bg-orange-500 text-white px-3 py-1 rounded-full;
   }
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-600 shadow-sm ring-1 ring-slate-100 transition hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60;
+  }
   .stat-pill {
     @apply flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-lg;
   }

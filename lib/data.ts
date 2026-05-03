@@ -1,141 +1,159 @@
+import mockOrders from '@/mock_orders.json'
 import { createAdminClient } from './supabase'
-import type {
-  Order,
-  DashboardStats,
-  ChartDataPoint,
-  CityData,
-  StatusData,
-  UtmData,
-  TopProduct,
-  WeeklyTrend,
-} from './types'
+import type { Order, OrderItem } from './types'
 
-export async function getOrders(): Promise<Order[]> {
-  const supabase = createAdminClient()
-  if (!supabase) {
-    console.warn('Supabase не настроен — проверьте переменные окружения')
-    return []
-  }
-  const { data, error } = await supabase
-    .from('orders')
-    .select('*')
-    .order('created_at', { ascending: false })
+export {
+  computeStats,
+  computeOrdersByDay,
+  computeByCity,
+  computeByStatus,
+  computeByUtm,
+  computeTopProducts,
+  computeTopOrders,
+  computeWeeklyTrend,
+} from './analytics'
 
-  if (error) {
-    console.error('Supabase error:', error)
-    return []
-  }
-  return data ?? []
+type DataSource = 'supabase' | 'demo'
+
+export interface OrdersResult {
+  orders: Order[]
+  source: DataSource
+  notice: string
+  generatedAt: string
 }
 
-export function computeStats(orders: Order[]): DashboardStats {
-  const totalRevenue = orders.reduce((sum, o) => sum + (o.total_amount ?? 0), 0)
-  return {
-    totalOrders: orders.length,
-    totalRevenue,
-    avgOrderValue: orders.length ? Math.round(totalRevenue / orders.length) : 0,
-    highValueOrders: orders.filter((o) => o.total_amount > 50000).length,
-  }
-}
-
-export function computeOrdersByDay(orders: Order[]): ChartDataPoint[] {
-  const map: Record<string, { orders: number; revenue: number }> = {}
-  for (const order of orders) {
-    const date = order.created_at
-      ? new Date(order.created_at).toLocaleDateString('ru-KZ', {
-          day: '2-digit',
-          month: '2-digit',
-        })
-      : 'Неизв.'
-    if (!map[date]) map[date] = { orders: 0, revenue: 0 }
-    map[date].orders += 1
-    map[date].revenue += order.total_amount ?? 0
-  }
-  return Object.entries(map)
-    .map(([date, v]) => ({ date, ...v }))
-    .reverse()
-}
-
-export function computeByCity(orders: Order[]): CityData[] {
-  const map: Record<string, { orders: number; revenue: number }> = {}
-  for (const order of orders) {
-    const city = order.city || 'Неизвестно'
-    if (!map[city]) map[city] = { orders: 0, revenue: 0 }
-    map[city].orders += 1
-    map[city].revenue += order.total_amount ?? 0
-  }
-  return Object.entries(map)
-    .map(([city, v]) => ({ city, ...v }))
-    .sort((a, b) => b.orders - a.orders)
-}
-
-export function computeByStatus(orders: Order[]): StatusData[] {
-  const labels: Record<string, string> = {
-    new: 'Новый',
-    in_progress: 'В работе',
-    complete: 'Выполнен',
-    cancel: 'Отменён',
-    assembling: 'Сборка',
-    assembled: 'Собран',
-    delivery: 'Доставка',
-  }
-  const map: Record<string, number> = {}
-  for (const order of orders) {
-    const s = labels[order.status] ?? order.status
-    map[s] = (map[s] ?? 0) + 1
-  }
-  return Object.entries(map)
-    .map(([status, count]) => ({ status, count }))
-    .sort((a, b) => b.count - a.count)
-}
-
-export function computeByUtm(orders: Order[]): UtmData[] {
-  const map: Record<string, number> = {}
-  for (const order of orders) {
-    const src = order.utm_source || 'organic'
-    map[src] = (map[src] ?? 0) + 1
-  }
-  return Object.entries(map)
-    .map(([source, count]) => ({ source, count }))
-    .sort((a, b) => b.count - a.count)
-}
-
-export function computeTopProducts(orders: Order[]): TopProduct[] {
-  const map: Record<string, { count: number; revenue: number }> = {}
-  for (const order of orders) {
-    for (const item of order.items ?? []) {
-      const name = item.productName?.trim() || 'Без названия'
-      if (!map[name]) map[name] = { count: 0, revenue: 0 }
-      map[name].count += item.quantity ?? 1
-      map[name].revenue += (item.initialPrice ?? 0) * (item.quantity ?? 1)
+interface RawMockOrder {
+  firstName?: string
+  lastName?: string
+  phone?: string
+  email?: string
+  status?: string
+  items?: OrderItem[]
+  delivery?: {
+    address?: {
+      city?: string
+      text?: string
     }
   }
-  return Object.entries(map)
-    .map(([name, v]) => ({ name, ...v }))
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 6)
+  customFields?: {
+    utm_source?: string
+  }
 }
 
-export function computeTopOrders(orders: Order[], limit = 3): Order[] {
-  return [...orders].sort((a, b) => b.total_amount - a.total_amount).slice(0, limit)
+const REQUEST_TIMEOUT_MS = 6500
+
+export async function getOrders(): Promise<Order[]> {
+  const result = await getOrdersWithMeta()
+  return result.orders
 }
 
-export function computeWeeklyTrend(orders: Order[]): WeeklyTrend {
-  const week = 7 * 24 * 60 * 60 * 1000
-  const now = Date.now()
-  const current = orders.filter(
-    (o) => o.created_at && now - new Date(o.created_at).getTime() < week
-  ).length
-  const previous = orders.filter((o) => {
-    if (!o.created_at) return false
-    const age = now - new Date(o.created_at).getTime()
-    return age >= week && age < 2 * week
-  }).length
-  const pct =
-    previous > 0
-      ? Math.round(((current - previous) / previous) * 100)
-      : current > 0
-      ? 100
-      : 0
-  return { current, previous, pct, isUp: pct >= 0 }
+export async function getOrdersWithMeta(): Promise<OrdersResult> {
+  const shouldForceDemo = process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
+
+  if (!shouldForceDemo) {
+    const supabase = createAdminClient()
+
+    if (supabase) {
+      try {
+        const query = supabase
+          .from('orders')
+          .select('*')
+          .order('created_at', { ascending: false })
+
+        const { data, error } = await withTimeout(query, REQUEST_TIMEOUT_MS)
+
+        if (error) {
+          console.error('Supabase error:', error)
+        } else if (data?.length) {
+          return {
+            orders: data.map(normalizeOrder),
+            source: 'supabase',
+            notice: 'Live data from Supabase',
+            generatedAt: new Date().toISOString(),
+          }
+        }
+      } catch (error) {
+        console.error('Supabase request failed, falling back to demo data:', error)
+      }
+    }
+  }
+
+  return {
+    orders: getDemoOrders(),
+    source: 'demo',
+    notice: shouldForceDemo
+      ? 'Demo mode is enabled'
+      : 'Demo data is shown because live data is unavailable',
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms)
+
+    Promise.resolve(promise).then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
+}
+
+function normalizeOrder(order: Order): Order {
+  return {
+    ...order,
+    total_amount: Number(order.total_amount) || 0,
+    items: Array.isArray(order.items) ? order.items.map(normalizeItem) : [],
+    created_at: order.created_at ?? new Date().toISOString(),
+    retailcrm_created_at: order.retailcrm_created_at ?? null,
+    telegram_notified: Boolean(order.telegram_notified),
+  }
+}
+
+function normalizeItem(item: OrderItem): OrderItem {
+  return {
+    productName: item.productName || 'Товар',
+    quantity: Number(item.quantity) || 1,
+    initialPrice: Number(item.initialPrice) || 0,
+  }
+}
+
+function getDemoOrders(): Order[] {
+  const statuses = ['new', 'in_progress', 'assembling', 'delivery', 'complete']
+  const now = new Date()
+
+  return (mockOrders as RawMockOrder[]).map((order, index) => {
+    const items = (order.items ?? []).map(normalizeItem)
+    const created = new Date(now)
+    created.setDate(now.getDate() - (index % 21))
+    created.setHours(10 + (index % 9), (index * 7) % 60, 0, 0)
+
+    const total = items.reduce(
+      (sum, item) => sum + item.initialPrice * item.quantity,
+      0
+    )
+
+    return {
+      id: index + 1,
+      retailcrm_id: 90000 + index,
+      first_name: order.firstName ?? '',
+      last_name: order.lastName ?? '',
+      phone: order.phone ?? '',
+      email: order.email ?? '',
+      status: statuses[index % statuses.length],
+      total_amount: total,
+      city: order.delivery?.address?.city || 'Неизвестно',
+      utm_source: order.customFields?.utm_source ?? 'organic',
+      items,
+      created_at: created.toISOString(),
+      retailcrm_created_at: created.toISOString(),
+      telegram_notified: total > 50000 && index % 3 === 0,
+    }
+  })
 }

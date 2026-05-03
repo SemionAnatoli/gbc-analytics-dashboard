@@ -1,104 +1,113 @@
 # GBC Analytics Dashboard
 
-Дашборд для мониторинга заказов: RetailCRM → Supabase → Next.js (Vercel) + Telegram-бот.
+Бизнес-дашборд для мониторинга заказов: RetailCRM -> Supabase -> Next.js/Vercel + Telegram-уведомления.
 
-**[🔗 Дашборд (Vercel) →](https://gbc-analytics-dashboard-semen.vercel.app)**
-**[📁 Репозиторий →](https://github.com/SemenAnatoli/gbc-analytics-dashboard)**
+Проект подготовлен как публичное демо для работодателя: даже без приватных ключей CRM и Supabase он открывается на Vercel, показывает реалистичные данные из `mock_orders.json` и дает по-настоящему покликать рабочие сценарии.
 
----
+## Что можно проверить в демо
+
+- KPI по заказам, выручке, среднему чеку и крупным заказам.
+- Фильтры по периоду, городу, статусу, UTM-источнику и поиску.
+- Графики заказов/выручки, статусов, городов, источников и топ-товаров.
+- Экспорт текущей выборки в CSV.
+- Добавление демо-заказа без перезагрузки страницы.
+- Изменение статуса заказа прямо в таблице или карточке заказа.
+- Карточка заказа с товарами, суммой, источником и контактами.
+- Симуляция Telegram-уведомления для заказов больше 50 000 KZT.
+- Fallback-режим: если Supabase недоступен, интерфейс автоматически показывает демо-данные.
 
 ## Стек
 
-| | |
-|---|---|
-| Frontend | Next.js 14 (App Router), TypeScript, Tailwind CSS, Recharts |
-| База данных | Supabase (PostgreSQL) |
+| Зона | Технологии |
+| --- | --- |
+| Frontend | Next.js 14 App Router, React, TypeScript |
+| UI | Tailwind CSS, Recharts |
+| Data | Supabase/PostgreSQL, JSONB `items` |
 | CRM | RetailCRM API v5 |
-| Деплой | Vercel |
-| Уведомления | Telegram Bot API |
+| Automation | Node.js scripts, Telegram Bot API |
+| Deploy | Vercel |
 
----
+## Структура
 
-## Как я делал — по шагам
-
-Начал с настройки инфраструктуры: зарегистрировал демо-аккаунт в RetailCRM, создал проект в Supabase, через BotFather поднял Telegram-бота. Параллельно набросал структуру Next.js проекта с нужными зависимостями.
-
-**Где застрял 1 — RetailCRM API возвращал 500 на каждый запрос.**
-Долго не мог понять в чём дело — ключ верный, endpoint правильный, но сервер молчит. В итоге оказалось, что Node.js отправлял запросы через системный прокси (`127.0.0.1:1371`), который и резал соединение. Решил явным удалением прокси-переменных перед HTTP-вызовами.
-
-**Где застрял 2 — тип заказа не существует.**
-После фикса прокси API стал отвечать, но с ошибкой: `"eshop-individual" does not exist`. Оказалось, в демо-аккаунте только один тип заказа — `main`. Подтянул справочник через `/api/v5/reference/order-types`, убедился и поправил скрипт.
-
-**Дашборд** строил на Next.js 14 с App Router. Данные из Supabase тянутся server-side — это быстрее и безопаснее, чем клиентские запросы. Графики через Recharts на клиенте: area chart с двойной осью, горизонтальные бары, donut-диаграмма. Добавил отдельный блок топ-товаров — агрегация по JSONB-полю `items` прямо в JS.
-
-**Telegram-бот** запускается отдельно, проверяет новые заказы каждую минуту, шлёт уведомление если сумма > 50 000 ₸. Чтобы не слать дубли при перезапуске — помечает отправленные заказы в Supabase флагом `telegram_notified`.
-
-**Claude Code** использовал как инструмент: помогал с конфигами, дебагом ошибок API, генерацией boilerplate. Каждый блок разбирал и при необходимости правил руками.
-
----
-
-## Структура проекта
-
-```
-app/                        — Next.js App Router
+```text
+app/
+  page.tsx                 server wrapper: получает данные и отдает dashboard app
   layout.tsx
-  page.tsx                  — главная страница дашборда
   globals.css
 components/
-  DashboardCharts.tsx       — все графики (client component)
+  DashboardApp.tsx         интерактивный дашборд
+  DashboardCharts.tsx      Recharts-графики
 lib/
-  data.ts                   — запросы + агрегации
-  supabase.ts               — клиент Supabase
-  types.ts                  — TypeScript типы
+  analytics.ts             чистые функции агрегации
+  data.ts                  Supabase + demo fallback
+  supabase.ts              server-side Supabase client
+  types.ts
 scripts/
-  upload-to-retailcrm.js   — загрузка 50 заказов в CRM
-  sync-to-supabase.js      — синхронизация CRM → Supabase
-  telegram-bot.js          — бот с уведомлениями
+  upload-to-retailcrm.js   загрузка mock_orders.json в RetailCRM
+  sync-to-supabase.js      синхронизация RetailCRM -> Supabase
+  telegram-bot.js          уведомления о крупных заказах
 supabase/
-  schema.sql               — SQL-схема таблицы
-mock_orders.json           — 50 тестовых заказов
+  schema.sql               таблица orders и индексы
+mock_orders.json           демо-заказы для публичного просмотра
 ```
 
----
-
-## Запуск локально
+## Локальный запуск
 
 ```bash
-# 1. Установить зависимости
 npm install
-
-# 2. Заполнить переменные окружения
 cp .env.example .env
-
-# 3. Создать таблицу в Supabase
-# Открыть supabase.com → SQL Editor → выполнить supabase/schema.sql
-
-# 4. Загрузить заказы в RetailCRM
-cd scripts && npm install
-node upload-to-retailcrm.js
-
-# 5. Синхронизировать в Supabase
-node sync-to-supabase.js
-
-# 6. Запустить дашборд
-cd .. && npm run dev
-
-# 7. Запустить Telegram-бот
-cd scripts && node telegram-bot.js
+npm run dev
 ```
 
----
+Открыть: `http://localhost:3000`
 
-## Переменные окружения
+Для публичного демо оставьте:
 
 ```env
-RETAILCRM_URL=https://yourdomain.retailcrm.ru
-RETAILCRM_API_KEY=...
+NEXT_PUBLIC_DEMO_MODE=true
+```
 
-NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+Так проект не зависит от приватных сервисов и стабильно работает на Vercel.
+
+## Деплой на Vercel
+
+1. Импортировать репозиторий в Vercel.
+2. Framework Preset: `Next.js`.
+3. Build Command: `npm run build`.
+4. Output Directory оставить пустым.
+5. В Environment Variables добавить:
+
+```env
+NEXT_PUBLIC_DEMO_MODE=true
+```
+
+Live-интеграции можно подключить позже в приватном окружении:
+
+```env
+RETAILCRM_URL=...
+RETAILCRM_API_KEY=...
+NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
-
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
+```
+
+## Live-пайплайн
+
+```bash
+cd scripts
+npm install
+npm run upload   # mock_orders.json -> RetailCRM
+npm run sync     # RetailCRM -> Supabase
+npm run bot      # Telegram alerts for high-value orders
+```
+
+`supabase/schema.sql` создает таблицу `orders`, индексы и RLS-политики. Дашборд читает данные server-side; запись выполняется через service role в скриптах.
+
+## Проверка перед деплоем
+
+```bash
+npx tsc --noEmit
+npm run build
 ```

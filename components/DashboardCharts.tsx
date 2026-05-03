@@ -40,43 +40,44 @@ const DarkTip = ({ active, payload, label }: any) => {
 // ─── Big orders-by-day tooltip ────────────────────────────────────────────────
 const OrdersDayTip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null
-  const orders = payload.find((p: any) => p.dataKey === 'orders')
-  const revenue = payload.find((p: any) => p.dataKey === 'revenue')
+  const point = payload[0]?.payload
   return (
     <div className="bg-slate-900/95 backdrop-blur text-white text-xs rounded-2xl px-4 py-3 shadow-2xl border border-white/10 min-w-[160px]">
       <p className="text-slate-300 font-semibold mb-2 text-[11px] uppercase tracking-wider">{label}</p>
-      {orders && (
-        <div className="flex items-center justify-between gap-4 mb-1">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-sm bg-emerald-400" />
-            <span className="text-slate-400">Заказы</span>
-          </div>
-          <span className="font-black text-emerald-300 text-sm">{orders.value}</span>
+      <div className="flex items-center justify-between gap-4 mb-1">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-sm bg-emerald-400" />
+          <span className="text-slate-400">Заказы</span>
         </div>
-      )}
-      {revenue && (
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-orange-400" />
-            <span className="text-slate-400">Выручка</span>
-          </div>
-          <span className="font-bold text-orange-300">{Number(revenue.value).toLocaleString('ru')} ₸</span>
+        <span className="font-black text-emerald-300 text-sm">{point?.orders ?? 0}</span>
+      </div>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-orange-400" />
+          <span className="text-slate-400">Выручка</span>
         </div>
-      )}
+        <span className="font-bold text-orange-300">{Number(point?.revenue ?? 0).toLocaleString('ru')} ₸</span>
+      </div>
     </div>
   )
 }
 
 // ─── Orders by day — ComposedChart (bars + revenue line) ─────────────────────
 export function OrdersByDayChart({ data }: { data: ChartDataPoint[] }) {
-  const avg = data.length ? Math.round(data.reduce((s, d) => s + d.orders, 0) / data.length) : 0
-  const maxOrders = Math.max(...data.map(d => d.orders), 1)
+  const avgOrders = data.length ? Math.round(data.reduce((s, d) => s + d.orders, 0) / data.length) : 0
+  const ordersPeakIndex = data.reduce((best, point, index) => {
+    const currentBest = data[best]
+    if (!currentBest) return index
+    if (point.orders > currentBest.orders) return index
+    if (point.orders === currentBest.orders && point.revenue > currentBest.revenue) return index
+    return best
+  }, 0)
 
   return (
-    <ResponsiveContainer width="100%" height={240}>
-      <ComposedChart data={data} margin={{ top: 12, right: 16, left: -12, bottom: 0 }}>
+    <ResponsiveContainer width="100%" height={260}>
+      <ComposedChart data={data} margin={{ top: 12, right: 12, left: 4, bottom: 6 }}>
         <defs>
-          {/* Bar gradient green→teal */}
+          {/* Bar gradient green->teal */}
           <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#3ecf8e" stopOpacity={1} />
             <stop offset="100%" stopColor="#0d9488" stopOpacity={0.85} />
@@ -85,11 +86,6 @@ export function OrdersByDayChart({ data }: { data: ChartDataPoint[] }) {
           <linearGradient id="barGradPeak" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#f97316" stopOpacity={1} />
             <stop offset="100%" stopColor="#ea580c" stopOpacity={0.85} />
-          </linearGradient>
-          {/* Revenue area gradient */}
-          <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#f97316" stopOpacity={0.18} />
-            <stop offset="100%" stopColor="#f97316" stopOpacity={0} />
           </linearGradient>
           {/* Glow filter */}
           <filter id="glow">
@@ -110,7 +106,8 @@ export function OrdersByDayChart({ data }: { data: ChartDataPoint[] }) {
           yAxisId="orders"
           tick={{ fontSize: 10, fill: '#94a3b8' }}
           axisLine={false} tickLine={false}
-          width={28}
+          width={34}
+          allowDecimals={false}
         />
         <YAxis
           yAxisId="revenue"
@@ -126,36 +123,32 @@ export function OrdersByDayChart({ data }: { data: ChartDataPoint[] }) {
         {/* Average reference line */}
         <ReferenceLine
           yAxisId="orders"
-          y={avg}
+          y={avgOrders}
           stroke="#94a3b8"
           strokeDasharray="4 4"
           strokeWidth={1}
-          label={{ value: `avg ${avg}`, position: 'insideTopRight', fontSize: 9, fill: '#94a3b8', dy: -4 }}
+          label={{ value: `avg ${avgOrders}`, position: 'insideTopRight', fontSize: 9, fill: '#94a3b8', dy: -4 }}
         />
 
-        {/* Bars: peak highlighted in orange */}
         <Bar yAxisId="orders" dataKey="orders" name="Заказы" radius={[5, 5, 0, 0]} maxBarSize={28}>
           {data.map((d, i) => (
             <Cell
               key={i}
-              fill={d.orders === maxOrders ? 'url(#barGradPeak)' : 'url(#barGrad)'}
+              fill={i === ordersPeakIndex ? 'url(#barGradPeak)' : 'url(#barGrad)'}
               opacity={0.92}
             />
           ))}
         </Bar>
 
-        {/* Revenue line with glow */}
-        <Area
+        <Line
           yAxisId="revenue"
-          type="monotone"
+          type="linear"
           dataKey="revenue"
           name="Выручка"
           stroke="#f97316"
           strokeWidth={2}
-          fill="url(#revGrad)"
           dot={false}
           activeDot={{ r: 5, fill: '#f97316', stroke: '#fff', strokeWidth: 2, filter: 'url(#glow)' }}
-          strokeDasharray=""
         />
       </ComposedChart>
     </ResponsiveContainer>
@@ -164,17 +157,47 @@ export function OrdersByDayChart({ data }: { data: ChartDataPoint[] }) {
 
 // ─── Revenue area ─────────────────────────────────────────────────────────────
 export function RevenueChart({ data }: { data: ChartDataPoint[] }) {
+  const peakIndex = data.reduce((best, point, index) => {
+    const currentBest = data[best]
+    if (!currentBest) return index
+    return point.revenue > currentBest.revenue ? index : best
+  }, 0)
+
   return (
-    <ResponsiveContainer width="100%" height={120}>
-      <AreaChart data={data} margin={{ top: 4, right: 4, left: -30, bottom: 0 }}>
+    <ResponsiveContainer width="100%" height={150}>
+      <AreaChart data={data} margin={{ top: 18, right: 8, left: 8, bottom: 8 }}>
         <defs>
           <linearGradient id="gOrange" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#f97316" stopOpacity={0.3} />
             <stop offset="100%" stopColor="#f97316" stopOpacity={0} />
           </linearGradient>
         </defs>
+        <XAxis
+          dataKey="date"
+          tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
+          axisLine={false}
+          tickLine={false}
+          interval="preserveStartEnd"
+          minTickGap={20}
+        />
+        <YAxis hide domain={['dataMin - 1000', 'dataMax + 1000']} />
         <Tooltip content={<DarkTip />} />
-        <Area type="monotone" dataKey="revenue" name="Выручка" stroke="#f97316" strokeWidth={2} fill="url(#gOrange)" dot={false} />
+        <Area
+          type="monotone"
+          dataKey="revenue"
+          name="Выручка"
+          stroke="#f97316"
+          strokeWidth={2}
+          fill="url(#gOrange)"
+          dot={(props: any) =>
+            props.index === peakIndex ? (
+              <circle cx={props.cx} cy={props.cy} r={4} fill="#f97316" stroke="#fff" strokeWidth={2} />
+            ) : (
+              <circle cx={props.cx} cy={props.cy} r={0} fill="transparent" />
+            )
+          }
+          activeDot={{ r: 5, fill: '#f97316', stroke: '#fff', strokeWidth: 2 }}
+        />
       </AreaChart>
     </ResponsiveContainer>
   )
@@ -183,14 +206,35 @@ export function RevenueChart({ data }: { data: ChartDataPoint[] }) {
 // ─── Mini bar (orders per day) ────────────────────────────────────────────────
 export function MiniBarChart({ data }: { data: ChartDataPoint[] }) {
   const last7 = data.slice(-7)
+  const peakIndex = last7.reduce((best, point, index) => {
+    const currentBest = last7[best]
+    if (!currentBest) return index
+    if (point.orders > currentBest.orders) return index
+    if (point.orders === currentBest.orders && point.revenue > currentBest.revenue) return index
+    return best
+  }, 0)
+
   return (
-    <ResponsiveContainer width="100%" height={80}>
-      <BarChart data={last7} margin={{ top: 4, right: 4, left: -30, bottom: 0 }} barSize={10}>
+    <ResponsiveContainer width="100%" height={150}>
+      <BarChart data={last7} margin={{ top: 20, right: 8, left: 8, bottom: 8 }} barSize={12}>
+        <XAxis
+          dataKey="date"
+          tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
+          axisLine={false}
+          tickLine={false}
+          interval={0}
+        />
+        <YAxis hide domain={[0, 'dataMax + 1']} />
         <Tooltip content={<DarkTip />} />
-        <Bar dataKey="orders" name="Заказы" radius={[4, 4, 0, 0]}>
-          {last7.map((_, i) => (
-            <Cell key={i} fill={i === last7.length - 1 ? '#f97316' : '#3ecf8e'} />
+        <Bar dataKey="orders" name="Заказы" radius={[6, 6, 0, 0]}>
+          {last7.map((item, i) => (
+            <Cell key={item.date} fill={i === peakIndex ? '#f97316' : '#3ecf8e'} />
           ))}
+          <LabelList
+            dataKey="orders"
+            position="top"
+            style={{ fontSize: 10, fill: '#64748b', fontWeight: 700 }}
+          />
         </Bar>
       </BarChart>
     </ResponsiveContainer>
